@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adamson ArrayTool</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header">
+                <img id="header" src="src/headerright.png">
+                <img id="logo" src="src/fm-logo-main-y-lo.png">
+            </div>
+        </header>
+
+        <div class="controls">
+            <div class="file-input-wrapper">
+                <label for="file-input" class="btn btn-primary">
+                    <img class="icon" src="src/fm-open.png">load BPT
+                </label>
+                <input type="file" id="file-input" accept=".bpt">
+            </div>
+            <div class="file-input-wrapper">
+                <label for="xml-input" class="btn btn-primary">
+                    <img class="icon" src="src/fm-open.png">load XML
+                </label>
+                <input type="file" id="xml-input" accept=".xml,text/xml,application/xml, */*">
+            </div>
+            <span class="file-name" id="file-name">no file loaded</span>
+            <button class="btn btn-secondary" title="Save Master XML" id="export-xml-btn" disabled >
+                <img class="save-icon" src="src/fm-save.png">
+            </button>
+            <!--<button class="btn btn-success" id="save-btn" disabled>Save BPT File</button>-->
+        </div>
+
+        <div class="content" id="content">
+            <div class="empty-state">
+                <h2>no file loaded</h2>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
