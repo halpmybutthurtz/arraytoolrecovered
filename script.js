@@ -301,6 +301,7 @@ async function handleExportXml() {
             cabinetElement.setAttribute("frameName", cabinet.frameName || "");
             cabinetElement.setAttribute("reference1", cabinet.reference1 || "");
             cabinetElement.setAttribute("reference2", cabinet.reference2 || "");
+            cabinetElement.setAttribute("stageAt", cabinet.stageAt || "");
 
             cabinet.columns.forEach((column, colIndex) => {
                 const columnElement = xmlDoc.createElement("Column");
@@ -384,6 +385,7 @@ async function exportCabinetXml(groupIndex, cabinetIndex) {
     cabinetElement.setAttribute("frameName", cabinet.frameName || "");
     cabinetElement.setAttribute("reference1", cabinet.reference1 || "");
     cabinetElement.setAttribute("reference2", cabinet.reference2 || "");
+    cabinetElement.setAttribute("stageAt", cabinet.stageAt || "");
 
     cabinet.columns.forEach((column, colIndex) => {
         const columnElement = xmlDoc.createElement("Column");
@@ -572,6 +574,12 @@ function parseBPTFile(content) {
     let inBox = false;
     let unit = '';
 
+    // Stage tracking
+    let selectedStageName = '';
+    let selectedStageHeight = '';
+    let currentStageName = '';
+    const stages = {};
+
     let foundCabinetGroups = false;
     
     for (let i = 0; i < lines.length; i++) {
@@ -581,6 +589,23 @@ function parseBPTFile(content) {
         if (line.startsWith('Unit =')) {
             unit = line.substring(7).trim();
         }
+
+        // Parse stages section (only before Cabinet Groups)
+        if (!foundCabinetGroups) {
+            if (line.startsWith('Selected Stage =')) {
+                selectedStageName = line.substring(17).trim();
+            }
+            
+            if (line.startsWith('name =')) {
+                currentStageName = line.substring(7).trim();
+            }
+            
+            if (line.startsWith('Height =') && currentStageName) {
+                const height = line.substring(9).trim();
+                stages[currentStageName] = height;
+                currentStageName = '';  // Reset for next stage
+            }
+        }
         
         // Track when we enter the Cabinet Groups section
         if (line === '#Cabinet Groups') {
@@ -588,6 +613,14 @@ function parseBPTFile(content) {
                 break;
             }
             foundCabinetGroups = true;
+                        // Set selected stage height now that we've parsed all stages
+            if (selectedStageName && stages[selectedStageName]) {
+                selectedStageHeight = stages[selectedStageName];
+                console.log('Selected Stage:', selectedStageName, 'Height:', selectedStageHeight);
+                console.log('All stages:', stages);
+            } else {
+                console.log('No selected stage found. Selected:', selectedStageName, 'Stages:', stages);
+            }
             continue;
         }
         
@@ -657,6 +690,7 @@ function parseBPTFile(content) {
                 reference1: '',
                 reference2: '',
                 arrayLength: '',
+                stageAt: '',
                 span: '',
                 space: ''
             };
@@ -767,10 +801,53 @@ function parseBPTFile(content) {
 
             // Calculate array length
             cabinet.arrayLength = calculateArrayLength(cabinet);
+
+            // Calculate stage at (bottomArrayPoint Z - selected stage height)
+            if (selectedStageHeight && cabinet.bottomArrayPoint) {
+                const bottomMatch = cabinet.bottomArrayPoint.match(/\(([^)]+)\)/);
+                if (bottomMatch) {
+                    const bottomValues = bottomMatch[1].split(',').map(v => parseFloat(v.trim()));
+                    if (bottomValues.length >= 3) {
+                        const bottomZ = bottomValues[2];
+                        const stageHeight = parseFloat(selectedStageHeight);
+                        if (!isNaN(bottomZ) && !isNaN(stageHeight)) {
+                            cabinet.stageAt = (bottomZ - stageHeight).toFixed(2);
+                        }
+                    }
+                }
+            }
+
+            // Convert load values from kg to lbs if Imperial units
+            if (unit === 'English') {
+                cabinet.frontLoad = convertKgToLbs(cabinet.frontLoad);
+                cabinet.rearLoad = convertKgToLbs(cabinet.rearLoad);
+            }
         });
     });
 
     return { cabinetGroups, rawLines: lines, unit };
+}
+
+function convertKgToLbs(kgValue) {
+    // Convert kg to lbs (1 kg = 2.20462 lbs)
+    if (!kgValue || kgValue === '') return '';
+    
+    const kg = parseFloat(kgValue);
+    if (isNaN(kg)) return kgValue;
+    
+    const lbs = kg * 2.20462;
+    return lbs.toFixed(1);
+}
+ 
+function convertLbsToKg(lbsValue) {
+    // Convert lbs to kg (1 lb = 0.453592 kg)
+    if (!lbsValue || lbsValue === '') return '';
+    
+    const lbs = parseFloat(lbsValue);
+    if (isNaN(lbs)) return lbsValue;
+    
+    const kg = lbs * 0.453592;
+    return kg.toFixed(1);
 }
 
 function isValidCabinetType(cabinetType) {
@@ -1051,17 +1128,6 @@ function calculateTotalLoad(cabinet) {
     return (frontLoad + rearLoad).toFixed(1);
 }
 
-function calculateTotalLoad(cabinet) {
-    const frontLoad = parseFloat(cabinet.frontLoad);
-    const rearLoad = parseFloat(cabinet.rearLoad);
-    
-    if (isNaN(frontLoad) || isNaN(rearLoad)) {
-        return 'N/A';
-    }
-    
-    return (frontLoad + rearLoad).toFixed(1);
-}
-
 function calculateDistanceBetweenPoints(cabinet) {
     // Extract first value from reference1 and reference2
     const ref1Match = cabinet.reference1.match(/\(([^)]+)\)/);
@@ -1284,9 +1350,9 @@ function renderCabinet(cabinet, groupIndex, cabinetIndex) {
                 ` : ''}
             </div>
             <div class="metadata-row">
-                ${isFlown && isOneMotor ? `
+                ${isFlown ? `
                 <div class="metadata-item">
-                    <span class="metadata-label">load:</span>
+                    <span class="metadata-label">total load:</span>
                     <span class="metadata-value">${calculateTotalLoad(cabinet)}${parsedData.unit === "Metric" ? " kg" : " lb"}</span>
                 </div>
                 ` : ''}
@@ -1325,6 +1391,12 @@ function renderCabinet(cabinet, groupIndex, cabinetIndex) {
                     <span class="metadata-label">array length:</span>
                     <span class="metadata-value">${cabinet.arrayLength || 'N/A'}${parsedData.unit === "Metric" ? " m" : " ft"}</span>
                 </div>
+                ${isFlown && cabinet.stageAt ? `
+                <div class="metadata-item">
+                    <span class="metadata-label">stage at:</span>
+                    <span class="metadata-value">${cabinet.stageAt}${parsedData.unit === "Metric" ? " m" : " ft"}</span>
+                </div>
+                ` : ''}
                 ${isSubArray ? `
                 <div class="metadata-item">
                     <span class="metadata-label">sub array span:</span>
@@ -1874,118 +1946,6 @@ function handleSave() {
     URL.revokeObjectURL(url);
 }
 
-/*function handleExportXml() {
-    if (!parsedData) {
-        alert('No file loaded to export.');
-        return;
-    }
-
-    // Create XML document
-    const xmlDoc = document.implementation.createDocument(null, "MasterXML");
-    const root = xmlDoc.documentElement;
-
-        //Create Readable datestamp
-        const now = new Date();
-        const dateTimeStamp = now.getFullYear() + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0') + '_' +
-        String(now.getHours()).padStart(2, '0') + '-' +
-        String(now.getMinutes()).padStart(2, '0') + '-' +
-        String(now.getSeconds()).padStart(2, '0');
-    
-    // Add metadata
-    const metadata = xmlDoc.createElement("Metadata");
-    metadata.setAttribute("originalFile", originalFileName || "unknown.bpt");
-    metadata.setAttribute("exportDate", new Date().toISOString());
-    metadata.setAttribute("unit", parsedData.unit || "Unknown");
-    root.appendChild(metadata);
-    
-    // Add cabinet groups
-    const cabinetGroupsElement = xmlDoc.createElement("CabinetGroups");
-    
-    parsedData.cabinetGroups.forEach((group, gIndex) => {
-        const groupElement = xmlDoc.createElement("CabinetGroup");
-        groupElement.setAttribute("index", gIndex);
-        groupElement.setAttribute("name", group.name || "");
-        groupElement.setAttribute("collapsed", collapsedGroups.has(gIndex) ? "true" : "false");
-        
-        // Add cabinets
-        group.cabinets.forEach((cabinet, cIndex) => {
-            const cabinetKey = `${gIndex}-${cIndex}`;
-            const cabinetElement = xmlDoc.createElement("Cabinet");
-            cabinetElement.setAttribute("index", cIndex);
-            cabinetElement.setAttribute("name", cabinet.name || "");
-            cabinetElement.setAttribute("cabinetType", cabinet.cabinetType || "");
-            cabinetElement.setAttribute("collapsed", collapsedCabinets.has(cabinetKey) ? "true" : "false");
-            cabinetElement.setAttribute("bypassed", bypassLimits[cabinetKey] ? "true" : "false");
-            
-            // Add all cabinet metadata
-            cabinetElement.setAttribute("voltage", cabinetVoltages[cabinetKey] || "230v");
-            cabinetElement.setAttribute("hop", cabinetHops[cabinetKey] || "1 Hop");
-            cabinetElement.setAttribute("installationType", cabinet.installationType || "");
-            cabinetElement.setAttribute("verticalAngle", cabinet.verticalAngle || "");
-            cabinetElement.setAttribute("horizontalAngle", cabinet.horizontalAngle || "");
-            cabinetElement.setAttribute("bottomArrayPoint", cabinet.bottomArrayPoint || "");
-            cabinetElement.setAttribute("frontLoad", cabinet.frontLoad || "");
-            cabinetElement.setAttribute("rearLoad", cabinet.rearLoad || "");
-            cabinetElement.setAttribute("hangingType", cabinet.hangingType || "");
-            cabinetElement.setAttribute("frameName", cabinet.frameName || "");
-            cabinetElement.setAttribute("reference1", cabinet.reference1 || "");
-            cabinetElement.setAttribute("reference2", cabinet.reference2 || "");
-
-            
-            // Add columns
-            cabinet.columns.forEach((column, colIndex) => {
-                const columnElement = xmlDoc.createElement("Column");
-                columnElement.setAttribute("index", colIndex);
-                columnElement.setAttribute("name", column.name || "");
-                
-                // Add boxes in column
-                column.boxes.forEach((box, boxIndex) => {
-                    const boxElement = createBoxElement(xmlDoc, box, boxIndex);
-                    columnElement.appendChild(boxElement);
-                });
-                
-                cabinetElement.appendChild(columnElement);
-            });
-            
-            // Add direct boxes
-            cabinet.boxes.forEach((box, boxIndex) => {
-                const boxElement = createBoxElement(xmlDoc, box, boxIndex);
-                boxElement.setAttribute("isDirect", "true");
-                cabinetElement.appendChild(boxElement);
-            });
-            
-            groupElement.appendChild(cabinetElement);
-        });
-        
-        cabinetGroupsElement.appendChild(groupElement);
-    });
-    
-    root.appendChild(cabinetGroupsElement);
-    
-    // Serialize XML
-    const serializer = new XMLSerializer();
-    const xmlString = serializer.serializeToString(xmlDoc);
-    
-    // Format XML with indentation
-    const formattedXml = formatXml(xmlString);
-    
-    // Download
-    const blob = new Blob([formattedXml], { type: 'application/xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const baseName = originalFileName ? originalFileName.replace('.bpt', '') : 'export';
-    a.download = `${baseName}_master_${dateTimeStamp}.xml`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    //alert('Master XML exported successfully!');
-}*/
-
 function createBoxElement(xmlDoc, box, boxIndex) {
     const boxElement = xmlDoc.createElement("Box");
     boxElement.setAttribute("index", boxIndex);
@@ -2142,6 +2102,7 @@ function importMasterXml(xmlDoc, file) {
                         frameName: cabinetElement.getAttribute("frameName"),
                         reference1: cabinetElement.getAttribute("reference1"),
                         reference2: cabinetElement.getAttribute("reference2"),
+                        stageAt: cabinetElement.getAttribute("stageAt") || '',
                         boxes: [],
                         columns: [],
                         startLine: 0,
@@ -2268,6 +2229,7 @@ function importCabinetXml(xmlDoc, file) {
         frameName: cabinetElement.getAttribute("frameName"),
         reference1: cabinetElement.getAttribute("reference1"),
         reference2: cabinetElement.getAttribute("reference2"),
+        stageAt: cabinetElement.getAttribute("stageAt") || '',
         boxes: [],
         columns: [],
         startLine: 0,
@@ -2398,7 +2360,7 @@ if (contentElement) {
     // Track when scroll resets to 0
     const observer = new MutationObserver(function() {
         if (contentElement.scrollLeft === 0 && lastScrollX !== 0) {
-            console.error('❌ SCROLL RESET DETECTED!');
+            console.error('SCROLL RESET DETECTED!');
             console.trace('Stack trace:');
         }
     });
@@ -2409,103 +2371,4 @@ if (contentElement) {
         attributes: true
     });
 }
-
-/*function exportCabinetXml(groupIndex, cabinetIndex) {
-    if (!parsedData) {
-        alert('No file loaded.');
-        return;
-    }
-
-    const group = parsedData.cabinetGroups[groupIndex];
-    const cabinet = group.cabinets[cabinetIndex];
-
-    //Create Readable datestamp
-        const now = new Date();
-        const dateTimeStamp = now.getFullYear() + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0') + '_' +
-        String(now.getHours()).padStart(2, '0') + '-' +
-        String(now.getMinutes()).padStart(2, '0') + '-' +
-        String(now.getSeconds()).padStart(2, '0');
-
-    
-    // Create XML document
-    const xmlDoc = document.implementation.createDocument(null, "CabinetXML");
-    const root = xmlDoc.documentElement;
-    root.setAttribute("type", "Cabinet");
-    
-    // Add metadata
-    const metadata = xmlDoc.createElement("Metadata");
-    metadata.setAttribute("originalFile", originalFileName || "unknown.bpt");
-    metadata.setAttribute("exportDate", new Date().toISOString());
-    metadata.setAttribute("unit", parsedData.unit || "Unknown");
-    metadata.setAttribute("groupName", group.name || "");
-    metadata.setAttribute("groupIndex", groupIndex);
-    root.appendChild(metadata);
-    
-    // Create cabinet element
-    const cabinetKey = `${groupIndex}-${cabinetIndex}`;
-    const cabinetElement = xmlDoc.createElement("Cabinet");
-    cabinetElement.setAttribute("index", cabinetIndex);
-    cabinetElement.setAttribute("name", cabinet.name || "");
-    cabinetElement.setAttribute("cabinetType", cabinet.cabinetType || "");
-    cabinetElement.setAttribute("bypassed", bypassLimits[cabinetKey] ? "true" : "false");
-    
-    // Add all cabinet metadata
-    cabinetElement.setAttribute("installationType", cabinet.installationType || "");
-    cabinetElement.setAttribute("verticalAngle", cabinet.verticalAngle || "");
-    cabinetElement.setAttribute("horizontalAngle", cabinet.horizontalAngle || "");
-    cabinetElement.setAttribute("bottomArrayPoint", cabinet.bottomArrayPoint || "");
-    cabinetElement.setAttribute("frontLoad", cabinet.frontLoad || "");
-    cabinetElement.setAttribute("rearLoad", cabinet.rearLoad || "");
-    cabinetElement.setAttribute("hangingType", cabinet.hangingType || "");
-    cabinetElement.setAttribute("frameName", cabinet.frameName || "");
-    cabinetElement.setAttribute("reference1", cabinet.reference1 || "");
-    cabinetElement.setAttribute("reference2", cabinet.reference2 || "");
-    
-    // Add columns
-    cabinet.columns.forEach((column, colIndex) => {
-        const columnElement = xmlDoc.createElement("Column");
-        columnElement.setAttribute("index", colIndex);
-        columnElement.setAttribute("name", column.name || "");
-        
-        // Add boxes in column
-        column.boxes.forEach((box, boxIndex) => {
-            const boxElement = createBoxElement(xmlDoc, box, boxIndex);
-            columnElement.appendChild(boxElement);
-        });
-        
-        cabinetElement.appendChild(columnElement);
-    });
-    
-    // Add direct boxes
-    cabinet.boxes.forEach((box, boxIndex) => {
-        const boxElement = createBoxElement(xmlDoc, box, boxIndex);
-        boxElement.setAttribute("isDirect", "true");
-        cabinetElement.appendChild(boxElement);
-    });
-    
-    root.appendChild(cabinetElement);
-    
-    // Serialize XML
-    const serializer = new XMLSerializer();
-    const xmlString = serializer.serializeToString(xmlDoc);
-    
-    // Format XML with indentation
-    const formattedXml = formatXml(xmlString);
-    
-    // Download
-    const blob = new Blob([formattedXml], { type: 'application/xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const cabinetName = cabinet.name ? cabinet.name.replace(/[^a-z0-9]/gi, '_') : 'cabinet';
-    a.download = `${cabinetName}_cabinet_${dateTimeStamp}.xml`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    //alert('Cabinet XML exported successfully!');
-}*/
 
